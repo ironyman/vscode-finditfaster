@@ -702,7 +702,7 @@ function getWorkspaceFoldersAsString() {
     return CFG.searchPaths.reduce((x, y) => x + ` '${y}'`, '');
 }
 
-function getCommandString(cmd: Command, withArgs: boolean = true, withTextSelection: boolean = true) {
+function getCommandString(cmd: Command, searchDirs: string[] = [], withTextSelection: boolean = true) {
     assert(cmd.uri);
     let ret = '';
     const cmdPath = cmd.uri.fsPath;
@@ -737,9 +737,11 @@ function getCommandString(cmd: Command, withArgs: boolean = true, withTextSelect
         ret += envVarToString('RESUME_SEARCH', '1');
     }
     ret += cmdPath;
-    if (withArgs) {
+    if (searchDirs.length == 0) {
         let paths = getWorkspaceFoldersAsString();
         ret += ` ${paths}`;
+    } else {
+        ret += searchDirs.reduce((x, y) => x + ` '${y}'`, '');
     }
     return ret;
 }
@@ -759,6 +761,41 @@ function getIgnoreString() {
     const globs = getIgnoreGlobs();
     // We separate by colons so we can have spaces in the globs
     return globs.reduce((x, y) => x + `${y}:`, '');
+}
+
+function getFileBrowserState(): Promise<string | undefined> {
+    const ext = vscode.extensions.getExtension('bodil.file-browser');
+    return new Promise((resolve, reject) => {
+        if (ext && !ext.isActive) {
+            resolve(ext.activate());
+        } else if (ext) {
+            resolve(ext.exports);
+        } else {
+            reject('File browser not available');
+        }
+    }).then((exports: any) => {
+        return exports.queryCurrentPath() as string | undefined;
+    }).catch(() => {
+        return undefined;
+    });
+}
+
+function closeFileBrowser(): Promise<void> {
+    const ext = vscode.extensions.getExtension('bodil.file-browser');
+    return new Promise((resolve, reject) => {
+        if (ext && !ext.isActive) {
+            resolve(ext.activate());
+        } else if (ext) {
+            resolve(ext.exports);
+        } else {
+            reject('File browser not available');
+        }
+    }).then((exports: any) => {
+        exports.close();
+        return;
+    }).catch(() => {
+        return;
+    });
 }
 
 async function executeTerminalCommand(cmd: string) {
@@ -800,7 +837,14 @@ async function executeTerminalCommand(cmd: string) {
     let cbResult = true;
     if (cb !== undefined) { cbResult = await cb(); }
     if (cbResult === true) {
-        term.sendText(getCommandString(commands[cmd]));
+        let fileBrowserPath = await getFileBrowserState();
+        if (fileBrowserPath !== undefined) {
+            term.sendText(getCommandString(commands[cmd], [ fileBrowserPath ]));
+            closeFileBrowser();
+        } else {
+            term.sendText(getCommandString(commands[cmd]));
+        }
+
         if (CFG.showMaximizedTerminal) {
             vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
         }
