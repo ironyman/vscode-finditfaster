@@ -702,11 +702,14 @@ function getWorkspaceFoldersAsString() {
     return CFG.searchPaths.reduce((x, y) => x + ` '${y}'`, '');
 }
 
-function getCommandString(cmd: Command, searchDirs: string[] = [], withTextSelection: boolean = true) {
+function getCommandString(cmd: Command, searchDirs: string[] = [], withTextSelection: boolean = true, withInitialQuery: string | undefined = undefined) {
     assert(cmd.uri);
     let ret = '';
     const cmdPath = cmd.uri.fsPath;
-    if (CFG.useEditorSelectionAsQuery && withTextSelection) {
+    if (withInitialQuery) {
+        fs.writeFileSync(CFG.selectionFile, withInitialQuery);
+        ret += envVarToString('HAS_SELECTION', '1');
+    } else if (CFG.useEditorSelectionAsQuery && withTextSelection) {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
             const selection = editor.selection;
@@ -729,6 +732,7 @@ function getCommandString(cmd: Command, searchDirs: string[] = [], withTextSelec
             }
         }
     }
+
     // useTypeFilter should only be try if we activated the corresponding command
     if (CFG.useTypeFilter && CFG.findWithinFilesFilter.size > 0) {
         ret += envVarToString('TYPE_FILTER', "'" +[...CFG.findWithinFilesFilter].reduce((x, y) => x + ':' + y) + "'");
@@ -737,7 +741,7 @@ function getCommandString(cmd: Command, searchDirs: string[] = [], withTextSelec
         ret += envVarToString('RESUME_SEARCH', '1');
     }
     ret += cmdPath;
-    if (searchDirs.length == 0) {
+    if (searchDirs.length === 0) {
         let paths = getWorkspaceFoldersAsString();
         ret += ` ${paths}`;
     } else {
@@ -763,7 +767,7 @@ function getIgnoreString() {
     return globs.reduce((x, y) => x + `${y}:`, '');
 }
 
-function getFileBrowserState(): Promise<string | undefined> {
+function getFileBrowserState(): Promise<{ initialQueryValue: string | undefined, path: string | undefined } | undefined> {
     const ext = vscode.extensions.getExtension('bodil.file-browser');
     return new Promise((resolve, reject) => {
         if (ext && !ext.isActive) {
@@ -774,7 +778,10 @@ function getFileBrowserState(): Promise<string | undefined> {
             reject('File browser not available');
         }
     }).then((exports: any) => {
-        return exports.queryCurrentPath() as string | undefined;
+        return {
+            path: exports.queryCurrentPath() as string | undefined,
+            initialQueryValue: exports.queryCurrentQueryValue() as string | undefined,
+        };
     }).catch(() => {
         return undefined;
     });
@@ -837,9 +844,10 @@ async function executeTerminalCommand(cmd: string) {
     let cbResult = true;
     if (cb !== undefined) { cbResult = await cb(); }
     if (cbResult === true) {
-        let fileBrowserPath = await getFileBrowserState();
-        if (fileBrowserPath !== undefined) {
-            term.sendText(getCommandString(commands[cmd], [ fileBrowserPath ]));
+        let fileBrowserState = await getFileBrowserState();
+
+        if (fileBrowserState !== undefined && fileBrowserState.path) {
+            term.sendText(getCommandString(commands[cmd], [ fileBrowserState.path ], false, fileBrowserState.initialQueryValue));
             closeFileBrowser();
         } else {
             term.sendText(getCommandString(commands[cmd]));
